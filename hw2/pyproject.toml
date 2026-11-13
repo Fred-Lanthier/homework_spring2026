@@ -3,7 +3,8 @@ name = "hw2-pg"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+# mujoco==2.2.0 (pinned by gym[mujoco]==0.25.2) only ships Python 3.10 wheels.
+requires-python = ">=3.10,<3.11"
 dependencies = [
     "matplotlib>=3.10.8",
     "ml-collections>=1.1.0",
@@ -12,9 +13,19 @@ dependencies = [
     "torch>=2.9.1",
     "tqdm>=4.67.1",
     "wandb[media]>=0.23.1",
-    "gym[classic_control,mujoco,box2d]==0.25.2",
+    "gym[classic_control,mujoco]==0.25.2",
+    # box2d-py has no Windows wheel and fails to build there; use the
+    # prebuilt Box2D wheel (same `import Box2D` API) on Windows only.
+    "gym[box2d]==0.25.2; sys_platform != 'win32'",
+    "box2d==2.3.10; sys_platform == 'win32'",
     "numpy<2.0.0",
 ]
+
+[tool.uv]
+# gym[mujoco]==0.25.2 pins mujoco==2.2.0, which has been removed from the PyPI
+# index, so the lockfile can no longer be re-resolved. 2.2.2 is the nearest
+# patch release, with the same dependencies and Python 3.10 wheels.
+override-dependencies = ["mujoco==2.2.2"]
 
 [build-system]
 requires = ["setuptools>=69"]

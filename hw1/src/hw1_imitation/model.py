@@ -45,14 +45,42 @@ class MSEPolicy(BasePolicy):
         chunk_size: int,
         hidden_dims: tuple[int, ...] = (128, 128),
     ) -> None:
+        
         super().__init__(state_dim, action_dim, chunk_size)
 
+        layers_list = []
+        in_dim = state_dim
+        for hid_dim in hidden_dims:
+            Layer = nn.Linear(in_dim, hid_dim)
+            layers_list.append(Layer)
+            activation = nn.ReLU()
+            layers_list.append(activation)
+            in_dim = hid_dim
+
+        layers_list.append(nn.Linear(in_dim, chunk_size*action_dim))
+
+        self.net = nn.Sequential(
+            *layers_list                    # * Permets de passer la liste layers_list de forme [layer1, layer2, ...] sous plusieurs arguments layer1, layer2, ... Cela désempile
+        )
+        self.loss = nn.MSELoss()
+
+    def _compute_action(
+            self,
+            state: torch.Tensor,
+    ) -> torch.Tensor:
+
+        flatten_action = self.net(state)
+        unflatten_actions  = flatten_action.reshape(state.shape[0], self.chunk_size, self.action_dim)
+        return unflatten_actions
+    
     def compute_loss(
         self,
         state: torch.Tensor,
         action_chunk: torch.Tensor,
     ) -> torch.Tensor:
-        raise NotImplementedError
+
+        predicted_actions = self._compute_action(state)
+        return (self.loss(predicted_actions, action_chunk))
 
     def sample_actions(
         self,
@@ -60,7 +88,8 @@ class MSEPolicy(BasePolicy):
         *,
         num_steps: int = 10,
     ) -> torch.Tensor:
-        raise NotImplementedError
+        predicted_actions = self._compute_action(state)
+        return predicted_actions
 
 
 class FlowMatchingPolicy(BasePolicy):
@@ -75,13 +104,55 @@ class FlowMatchingPolicy(BasePolicy):
         hidden_dims: tuple[int, ...] = (128, 128),
     ) -> None:
         super().__init__(state_dim, action_dim, chunk_size)
+        layers = []
+        in_dim = self.state_dim + self.action_dim * self.chunk_size + 1 # size of state, size of action for chunk actions (chunk is the number of actions), size of flow matching timestep
 
+        for hid_dim in hidden_dims:
+            layer = nn.Linear(in_dim, hid_dim)
+            in_dim = hid_dim
+            layers.append(layer)
+            layers.append(nn.ReLU())
+
+        layers.append(nn.Linear(in_dim, self.action_dim * self.chunk_size))
+
+        self.net = nn.Sequential(
+            *layers,
+        )
+
+        self.loss = nn.MSELoss()
+
+    def compute_velocity_field(
+            self, 
+            state: torch.Tensor, 
+            noisy_action: torch.Tensor,
+            tau: torch.Tensor,
+            ) -> torch.Tensor:
+        
+        
+        
+        A_t_flat = noisy_action.flatten(start_dim=1)
+        state_flat = state
+        tau_flat = tau.flatten(start_dim=1)
+        input_net = torch.cat([state_flat, A_t_flat, tau_flat], dim=1)
+
+        output_net = self.net(input_net)
+        output_net_reshape = output_net.reshape(state.shape[0], self.chunk_size, self.action_dim)
+
+        return output_net_reshape
+        
     def compute_loss(
         self,
         state: torch.Tensor,
         action_chunk: torch.Tensor,
     ) -> torch.Tensor:
-        raise NotImplementedError
+        
+        tau = torch.rand(state.shape[0], 1, 1, device=state.device)
+        A_0 = torch.randn_like(action_chunk)
+        A_t = tau * action_chunk + (1-tau) * A_0
+
+        net_output = self.compute_velocity_field(state, A_t, tau)
+        return self.loss(net_output, (action_chunk - A_0))
+
 
     def sample_actions(
         self,
@@ -89,7 +160,16 @@ class FlowMatchingPolicy(BasePolicy):
         *,
         num_steps: int = 10,
     ) -> torch.Tensor:
-        raise NotImplementedError
+
+        A_t = torch.randn((state.shape[0], self.chunk_size, self.action_dim)).to(state.device)
+        tau = torch.zeros(state.shape[0], 1, 1, device=state.device)
+
+        for _ in range(num_steps):
+            vf = self.compute_velocity_field(state, A_t, tau)
+            A_t = A_t + 1/num_steps*vf
+            tau += 1/num_steps
+
+        return A_t
 
 
 PolicyType: TypeAlias = Literal["mse", "flow"]

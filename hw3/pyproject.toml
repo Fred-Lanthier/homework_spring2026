@@ -12,10 +12,31 @@ dependencies = [
     "torch>=2.9.1",
     "tqdm>=4.67.1",
     "wandb[media]>=0.23.1",
-    "gym[classic_control,mujoco,box2d,atari,accept-rom-license]==0.25.2",
+    "gym[classic_control,mujoco,atari,accept-rom-license]==0.25.2",
+    # box2d-py has no Windows wheel and fails to build there; use the
+    # prebuilt Box2D wheel (same `import Box2D` API) on Windows only.
+    "gym[box2d]==0.25.2; sys_platform != 'win32'",
+    "box2d==2.3.10; sys_platform == 'win32'",
     "numpy<2.0.0",
     "pyyaml>=6.0",
     "gradescope-utils>=0.5.0",
+    "seaborn>=0.13.2",
+]
+
+[tool.uv]
+# gym[mujoco]==0.25.2 pins mujoco==2.2.0, which has been removed from the PyPI
+# index, so the lockfile can no longer be re-resolved. 2.2.2 is the nearest
+# patch release, with the same dependencies and Python 3.10 wheels.
+override-dependencies = ["mujoco==2.2.2"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'win32'" },
 ]
 
 [build-system]

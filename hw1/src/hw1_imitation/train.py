@@ -20,7 +20,7 @@ from hw1_imitation.data import (
     load_pusht_zarr,
 )
 from hw1_imitation.model import build_policy, PolicyType
-from hw1_imitation.evaluation import Logger
+from hw1_imitation.evaluation import Logger, evaluate_policy
 
 LOGDIR_PREFIX = "exp"
 
@@ -38,7 +38,8 @@ class TrainConfig:
     chunk_size: int = 8
 
     batch_size: int = 128
-    lr: float = 3e-4
+    lr: float = 1e-3
+    
     weight_decay: float = 0.0
     hidden_dims: tuple[int, ...] = (256, 256, 256)
     # The number of epochs to train for.
@@ -56,6 +57,7 @@ class TrainConfig:
     # Experiment name suffix for logging and WandB.
     exp_name: str | None = None
 
+    lr_min: float = 1e-6
 
 def parse_train_config(
     args: list[str] | None = None,
@@ -127,11 +129,49 @@ def run_training(config: TrainConfig) -> None:
     )
     logger = Logger(log_dir)
 
-    ### TODO: PUT YOUR MAIN TRAINING LOOP HERE ###
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr = config.lr,
+        weight_decay=config.weight_decay,
+    )
+    T_max = len(loader) * config.num_epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
+                                                           T_max=T_max,
+                                                           eta_min=config.lr_min,
+                                                           )
+    step = 0
+    for epoch in range(config.num_epochs):
+        model.train()
+        for state, action_chunk in loader:
+            optimizer.zero_grad()
+            loss = model.compute_loss(state.to(device), action_chunk.to(device))
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            if step % config.log_interval == 0:
+                            row = {"train/loss": loss.item()}
+                            row["epoch"] = epoch
+                            row["train/lr"] = scheduler.get_last_lr()[0]
+                            if step == 0:
+                                # Le premier row fixe les colonnes du CSV : on y réserve celle de l'éval.
+                                row["eval/mean_reward"] = float("nan")
+                            logger.log(row, step)
+            
+            if step % config.eval_interval == 0:
+                evaluate_policy(model, 
+                                normalizer, 
+                                device, 
+                                config.chunk_size,
+                                config.video_size,
+                                config.num_video_episodes,
+                                config.flow_num_steps,
+                                step,
+                                logger)
+
+            step += 1
 
     logger.dump_for_grading()
-
-
 def main() -> None:
     config = parse_train_config()
     run_training(config)

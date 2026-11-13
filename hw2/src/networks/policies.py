@@ -60,11 +60,14 @@ class MLPPolicy(nn.Module):
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         """Takes a single observation (as a numpy array) and returns a single action (as a numpy array)."""
         # TODO: implement get_action
-        action = None
+        obs = ptu.from_numpy(obs)
+        dist = self.forward(obs)
+        action = dist.sample()
+        action = ptu.to_numpy(action)
 
         return action
 
-    def forward(self, obs: torch.FloatTensor):
+    def forward(self, obs: torch.FloatTensor) -> distributions.Distribution:
         """
         This function defines the forward pass of the network.  You can return anything you want, but you should be
         able to differentiate through it. For example, you can return a torch.FloatTensor. You can also return more
@@ -72,10 +75,16 @@ class MLPPolicy(nn.Module):
         """
         if self.discrete:
             # TODO: define the forward pass for a policy with a discrete action space.
-            pass
+            logits = self.logits_net(obs)
+            dist = distributions.Categorical(logits=logits)
         else:
             # TODO: define the forward pass for a policy with a continuous action space.
-            pass
+            mean_dist = self.mean_net(obs)
+            std_dist = torch.exp(self.logstd)
+            dist = distributions.Normal(loc=mean_dist, scale=std_dist)
+
+        return dist
+        
 
     def update(self, obs: np.ndarray, actions: np.ndarray, *args, **kwargs) -> dict:
         """
@@ -100,11 +109,18 @@ class MLPPolicyPG(MLPPolicy):
         advantages = ptu.from_numpy(advantages)
 
         # TODO: compute the policy gradient actor loss
-        loss = None
+        dist = self.forward(obs)
+        if self.discrete:
+            loss = -dist.log_prob(actions) * advantages
+        else:
+            loss = -torch.sum(dist.log_prob(actions), dim=1) * advantages
+        loss_mean = torch.mean(loss)
 
         # TODO: perform an optimizer step
-        pass
+        self.optimizer.zero_grad()
+        loss_mean.backward()
+        self.optimizer.step()
 
         return {
-            "Actor Loss": loss.item(),
+            "Actor Loss": loss_mean.item(),
         }
