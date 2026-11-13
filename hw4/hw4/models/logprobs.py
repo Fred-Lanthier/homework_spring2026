@@ -43,7 +43,15 @@ def compute_per_token_logprobs(
     #
     # Respect enable_grad: when enable_grad=False this function should not build an
     # autograd graph.
-    raise NotImplementedError("student TODO: compute_per_token_logprobs")
+    B = attention_mask.shape[0]
+    L = attention_mask.shape[1]
+
+    with torch.set_grad_enabled(enable_grad):
+        out: torch.Tensor = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+        logits: torch.Tensor = out.logits
+        log_p: torch.Tensor = F.cross_entropy(input=logits[:, :-1, :].flatten(start_dim=0, end_dim=1), target=input_ids[:, 1:].flatten(), reduction="none")
+
+        return -1*log_p.reshape((B, L-1))
 
 
 def build_completion_mask(
@@ -66,7 +74,14 @@ def build_completion_mask(
     # prompt_input_len is the (padded) prompt length before completion tokens were
     # appended. You can use attention_mask to exclude padding; pad_token_id is passed
     # for convenience but a direct attention-mask-based solution is fine.
-    raise NotImplementedError("student TODO: build_completion_mask")
+
+    B, L = input_ids.shape[0], input_ids.shape[1]
+    mask: torch.Tensor = torch.zeros((B, L-1)).to(input_ids.device)
+
+    mask = attention_mask[:, 1:].clone() # attention mask vaut 0 là où il y a du padding et 1 sinon
+    mask[:, :prompt_input_len-1] = 0.0 # -1 car on a déjà retiré le premier token
+
+    return mask.float()
 
 
 def masked_sum(x: torch.Tensor, mask: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
@@ -110,4 +125,7 @@ def approx_kl_from_logprobs(
     #                             = KL(p_new || p_ref).
     #
     # The clamp to [-20, 20] is for numerical stability / variance control.
+    delta = torch.clamp(ref_logprobs - new_logprobs, min=-log_ratio_clip, max=log_ratio_clip)
+    per_token = torch.exp(delta) - delta - 1
+    return masked_mean(x=per_token, mask=mask, eps=eps)
     raise NotImplementedError("student TODO: approx_kl_from_logprobs")

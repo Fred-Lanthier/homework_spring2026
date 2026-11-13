@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional, Tuple
+from itertools import batched
 
 import torch
 
@@ -49,4 +50,45 @@ def iter_minibatches(
     # - Slice ALL tensor fields consistently with the same minibatch indices.
     # - Keep task_names / completion_texts aligned with the same indices when present.
     # - If device is not None, move the minibatch to that device before yielding.
-    raise NotImplementedError("student TODO: iter_minibatches")
+    N = batch.input_ids.shape[0]
+    if shuffle:
+        if generator is not None:
+            iter_list = torch.randperm(N, device=generator.device, generator=generator).to(batch.input_ids.device)
+        else:
+            iter_list = torch.randperm(N).to(batch.input_ids.device)
+    else:
+        iter_list = torch.arange(N).to(batch.input_ids.device)
+
+    for start in range(0, N, minibatch_size):
+        if start + minibatch_size < N:
+            idx = iter_list[start:start+minibatch_size]
+        else:
+            idx = iter_list[start:]
+
+        mini_batch: RolloutBatch = RolloutBatch(
+            input_ids=batch.input_ids[idx, :],
+            attention_mask = batch.attention_mask[idx, :],
+            completion_mask = batch.completion_mask[idx, :],
+            old_logprobs = batch.old_logprobs[idx, :],
+            ref_logprobs = batch.ref_logprobs[idx, :],
+            rewards = batch.rewards[idx],
+            advantages = batch.advantages[idx],
+            task_names = None,
+            completion_texts = None,
+        )
+
+        if batch.task_names is not None:
+            mini_batch.task_names = []
+            for i in idx.tolist():
+                mini_batch.task_names.append(batch.task_names[i])
+
+        if batch.completion_texts is not None:
+            mini_batch.completion_texts = []
+            for i in idx.tolist():
+                mini_batch.completion_texts.append(batch.completion_texts[i])
+
+            
+        if device is not None:
+            mini_batch = mini_batch.to(device)
+        yield mini_batch
+    
